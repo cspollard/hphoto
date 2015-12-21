@@ -6,8 +6,11 @@ import Control.Applicative
 
 import Vision.Image.Conversion
 import Vision.Image
+import qualified Vision.Image.Class as IC
 import Vision.Image.Storage.DevIL
 import System.Environment (getArgs)
+
+import Control.Monad (forM_)
 
 zipWithI :: (Image src1, Image src2, Image res, Convertible (Delayed (ImagePixel res)) res) =>
                 (ImagePixel src1 -> ImagePixel src2 -> ImagePixel res) -> src1 -> src2 -> res
@@ -26,24 +29,25 @@ cutOff :: Ord a => a -> a -> a
 cutOff mx x = if x < mx then x else mx
 
 
+toGreen, toRed, toBlue, toAlpha :: (Convertible src RGBA) => src -> GreyDelayed
+toGreen src = IC.map (GreyPixel . rgbaGreen) (convert src :: RGBA)
+toRed src = IC.map (GreyPixel . rgbaRed) (convert src :: RGBA)
+toBlue src = IC.map (GreyPixel . rgbaBlue) (convert src :: RGBA)
+toAlpha src = IC.map (GreyPixel . rgbaAlpha) (convert src :: RGBA)
+
 main :: IO ()
 main = do
-        fin : foutX : foutY : foutXY : _ <- getArgs
-        img <- load Autodetect fin :: IO (Either StorageError Grey)
-        let imgX = scharr DerivativeX <$> img :: Either StorageError Grey
-        let imgY = scharr DerivativeY <$> img :: Either StorageError Grey
-
-        case imgX of
+        fin : fout : _ <- getArgs
+        i <- load Autodetect fin :: IO (Either StorageError RGBA)
+        case i of
             Left err -> error (show err)
-            Right ix -> save Autodetect foutX (convert ix :: Grey)
-            
-            
-        case imgY of
-            Left err -> error (show err)
-            Right iy -> save Autodetect foutY (convert iy :: Grey)
-            
-        case liftA2 (,) imgX imgY of
-            Right (ix, iy) -> save Autodetect foutXY (zipWithI (\x y -> cutOff 255 (x + y)) ix iy :: Grey)
-            _ -> return Nothing
+            Right img ->
+                forM_ [(toRed, "Red"), (toBlue, "Blue"), (toGreen, "Green"), (toAlpha, "Alpha")] $
+                    \(f, n) -> do
+                            let img' = f img
+                            let imgX = scharr DerivativeX img' :: GreyDelayed
+                            let imgY = scharr DerivativeY img' :: GreyDelayed
 
-        return ()
+                            save Autodetect (fout ++ n ++ "X.jpg") $ compute imgX
+                            save Autodetect (fout ++ n ++ "Y.jpg") $ compute imgY
+                            save Autodetect (fout ++ n ++ "XY.jpg") (zipWithI (\x y -> cutOff 255 (x + y)) imgX imgY :: Grey)
